@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #FAFAF9; /* Pearl */
+    --foreground: #1C1917; /* Soft Black */
+    --card: #FFFFFF;
+    --card-foreground: #1C1917;
+    
+    --primary: #0D9488; /* Teal vibrante calmado */
+    --primary-foreground: #FFFFFF;
+    
+    --secondary: #8B5CF6; /* Violeta suave - Gemini */
+    --secondary-foreground: #FFFFFF;
+    
+    --muted: #F5F5F4;
+    --muted-foreground: #78716C; /* Warm Gray */
+    
+    --accent: #F5F5F4;
+    --accent-foreground: #1C1917;
+    
+    --destructive: #EF4444; /* Rose */
+    --destructive-foreground: #FFFFFF;
+    
+    --success: #10B981; /* Emerald */
+    --warning: #F59E0B; /* Amber */
+    
+    --border: #E7E5E4;
+    --input: #E7E5E4;
+    --ring: #0D9488;
+    
+    --radius-lg: 24px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+  }
+
+  .dark {
+    --background: #0C0A09; /* Deep Warm Gray */
+    --foreground: #FAFAF9;
+    --card: #1C1917;
+    --card-foreground: #FAFAF9;
+    
+    --primary: #2DD4BF; /* Teal luminoso */
+    --primary-foreground: #0C0A09;
+    
+    --secondary: #A78BFA; /* Violeta luminoso */
+    --secondary-foreground: #0C0A09;
+    
+    --muted: #292524;
+    --muted-foreground: #D6D3D1; /* Mejor contraste P0 */
+    
+    --accent: #292524;
+    --accent-foreground: #FAFAF9;
+    
+    --destructive: #EF4444;
+    --destructive-foreground: #FAFAF9;
+    
+    --border: #292524;
+    --input: #292524;
+    --ring: #2DD4BF;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body ::selection {
+    background-color: color-mix(in srgb, var(--primary) 20%, transparent);
+    color: var(--primary);
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+  }
+  h1, h2 {
+    letter-spacing: -0.05em;
+  }
+  h3, h4, h5, h6 {
+    letter-spacing: -0.025em;
+  }
+  
+  /* Tap highlight removal for mobile */
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Glassmorphism utilities */
+.glass {
+  @apply bg-white/80 backdrop-blur-xl dark:bg-black/70 border border-white/20 dark:border-white/10;
+}
