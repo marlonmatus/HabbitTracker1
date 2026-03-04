@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
-import { progressApi, tipsApi } from '../services/api'
+import { progressApi, tipsApi, insightApi } from '../services/api'
 
 export function useProgress(userId) {
   const [progress, setProgress] = useState([])
   const [tip, setTip] = useState(null)
+  const [insight, setInsight] = useState(null)
   const [loadingProgress, setLoadingProgress] = useState(true)
   const [loadingTip, setLoadingTip] = useState(true)
+  const [loadingInsight, setLoadingInsight] = useState(true)
   const [refreshingTip, setRefreshingTip] = useState(false)
   const [error, setError] = useState(null)
   const [refreshError, setRefreshError] = useState(null)
+  const [errorInsight, setErrorInsight] = useState(null)
 
   const fetchProgress = useCallback(async () => {
     if (!userId) return
@@ -57,21 +60,40 @@ export function useProgress(userId) {
     }
   }, [userId])
 
+  const fetchInsight = useCallback(async () => {
+    if (!userId) return
+    setLoadingInsight(true)
+    setErrorInsight(null)
+    try {
+      const data = await insightApi.get(userId)
+      setInsight(data.insight)
+    } catch (err) {
+      setErrorInsight(err.message)
+    } finally {
+      setLoadingInsight(false)
+    }
+  }, [userId])
+
   useEffect(() => {
     fetchProgress()
     fetchTip()
-  }, [fetchProgress, fetchTip])
+    fetchInsight()
+  }, [fetchProgress, fetchTip, fetchInsight])
 
   return {
     progress,
     tip,
+    insight,
     loadingProgress,
     loadingTip,
+    loadingInsight,
     refreshingTip,
     refreshError,
     error,
+    errorInsight,
     refetchProgress: fetchProgress,
     refetchTip: fetchTip,
+    refetchInsight: fetchInsight,
     refreshTip,
   }
 }

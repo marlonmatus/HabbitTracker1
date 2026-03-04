@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react"
-import { Moon, Sun, Flame, Award, CalendarDays, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
+import { useState, useEffect, useCallback } from "react"
+import { Moon, Sun, Flame, Award, CalendarDays, RefreshCw, ChevronLeft, ChevronRight, MessageCircle, Lightbulb } from "lucide-react"
 import { useTheme } from "../components/ThemeProvider"
 import { PageHeader } from "../components/ui/PageHeader"
 import { HabitCard } from "../components/ui/HabitCard"
@@ -7,8 +7,10 @@ import { MotivationCard } from "../components/ui/MotivationCard"
 import { StatCard } from "../components/ui/StatCard"
 import { EmptyState } from "../components/ui/EmptyState"
 import { DashboardSkeleton } from "../components/ui/LoadingSkeletons"
+import { ContextualToast } from "../components/ui/ContextualToast"
 import { useHabits } from "../hooks/useHabits"
 import { useProgress } from "../hooks/useProgress"
+import { aiApi, habitsApi } from "../services/api"
 
 const USER_ID = import.meta.env.VITE_USER_ID || 'demo-user'
 
@@ -21,9 +23,71 @@ export default function Dashboard() {
 
   const [selectedDate, setSelectedDate] = useState(() => new Date())
   const formattedDate = selectedDate.toLocaleDateString('sv')
+  const [contextualToast, setContextualToast] = useState(null)
+  const [suggestion, setSuggestion] = useState(null)
+  const [loadingSuggest, setLoadingSuggest] = useState(false)
+  const [coachOpen, setCoachOpen] = useState(false)
+  const [coachMessages, setCoachMessages] = useState([])
+  const [coachInput, setCoachInput] = useState("")
+  const [coachLoading, setCoachLoading] = useState(false)
 
-  const { habits, loading, toggleHabit } = useHabits(formattedDate)
-  const { tip, loadingTip, refreshingTip, refreshError, refreshTip } = useProgress(USER_ID)
+  const handleContextualEvent = useCallback((message, eventType) => {
+    setContextualToast({ message, eventType })
+  }, [])
+
+  const { habits, loading, toggleHabit, refetch: refetchHabits } = useHabits(formattedDate, { onContextualEvent: handleContextualEvent })
+  const { tip, insight, loadingTip, loadingInsight, refreshingTip, refreshError, refreshTip, errorInsight } = useProgress(USER_ID)
+
+  useEffect(() => {
+    let cancelled = false
+    aiApi.contextualEvent({ user_id: USER_ID, trigger: "dashboard" }).then((data) => {
+      if (!cancelled && data?.message) setContextualToast({ message: data.message, eventType: data.event_type })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  const handleSuggestHabit = async () => {
+    setLoadingSuggest(true)
+    setSuggestion(null)
+    try {
+      const data = await aiApi.suggestHabit(USER_ID)
+      setSuggestion(data)
+    } catch {
+      setSuggestion(null)
+    } finally {
+      setLoadingSuggest(false)
+    }
+  }
+
+  const handleAddSuggestedHabit = async () => {
+    if (!suggestion?.name) return
+    try {
+      await habitsApi.create({
+        user_id: USER_ID,
+        name: suggestion.name,
+        description: [suggestion.reason, suggestion.first_step].filter(Boolean).join(" — ") || undefined,
+      })
+      setSuggestion(null)
+      refetchHabits()
+    } catch (_) {}
+  }
+
+  const handleSendCoach = async () => {
+    const text = coachInput.trim()
+    if (!text || coachLoading) return
+    setCoachInput("")
+    setCoachMessages((prev) => [...prev, { role: "user", content: text }])
+    setCoachLoading(true)
+    try {
+      const history = coachMessages.map((m) => ({ role: m.role, content: m.content }))
+      const data = await aiApi.coach({ user_id: USER_ID, message: text, history })
+      setCoachMessages((prev) => [...prev, { role: "assistant", content: data.reply }])
+    } catch {
+      setCoachMessages((prev) => [...prev, { role: "assistant", content: "No pude responder ahora. Intenta en un momento." }])
+    } finally {
+      setCoachLoading(false)
+    }
+  }
 
   const handleToggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark')
@@ -188,6 +252,52 @@ export default function Dashboard() {
             )}
           </MotivationCard>
 
+          <MotivationCard title="Insight de tu progreso" className="border-primary/20 bg-primary/5">
+            {loadingInsight ? (
+              <span className="opacity-50 animate-pulse">Generando insight...</span>
+            ) : errorInsight ? (
+              <span className="text-muted-foreground text-sm">No se pudo cargar el insight.</span>
+            ) : (
+              insight || "Completa hábitos esta semana para ver un insight personalizado."
+            )}
+          </MotivationCard>
+
+          <button
+            type="button"
+            onClick={handleSuggestHabit}
+            disabled={loadingSuggest}
+            className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl border border-border/60 bg-card hover:bg-muted/50 text-sm font-medium text-foreground transition-colors disabled:opacity-50"
+          >
+            <Lightbulb className="w-4 h-4" />
+            {loadingSuggest ? "Generando..." : "Sugerir hábito para mí"}
+          </button>
+
+          {suggestion && (
+            <div className="bg-primary/10 border border-primary/20 rounded-2xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-primary">Hábito sugerido</h3>
+              <p className="font-medium text-foreground">{suggestion.name}</p>
+              <p className="text-xs text-muted-foreground">Frecuencia: {suggestion.frequency}</p>
+              {suggestion.reason && <p className="text-sm text-foreground/80">{suggestion.reason}</p>}
+              {suggestion.first_step && <p className="text-xs text-muted-foreground">Primer paso: {suggestion.first_step}</p>}
+              <button
+                type="button"
+                onClick={handleAddSuggestedHabit}
+                className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                Agregar
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setCoachOpen(true)}
+            className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl border border-border/60 bg-card hover:bg-muted/50 text-sm font-medium text-foreground transition-colors"
+          >
+            <MessageCircle className="w-4 h-4" />
+            Hablar con mi coach
+          </button>
+
           {/* Panel de Estadísticas (Grid) */}
           <div className="grid grid-cols-2 lg:grid-cols-1 gap-4">
             <StatCard icon={Flame} color="orange" title="Racha actual" value="14 días" />
@@ -197,6 +307,54 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {contextualToast && (
+        <ContextualToast
+          message={contextualToast.message}
+          eventType={contextualToast.eventType}
+          onClose={() => setContextualToast(null)}
+        />
+      )}
+
+      {coachOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setCoachOpen(false)} aria-hidden />
+          <div className="relative z-10 w-full max-w-md bg-card border border-border/60 rounded-2xl shadow-level-2 flex flex-col max-h-[80vh]">
+            <div className="p-4 border-b border-border/50 flex items-center justify-between">
+              <h3 className="font-semibold text-foreground">Coach zen</h3>
+              <button type="button" onClick={() => setCoachOpen(false)} className="p-2 rounded-lg text-muted-foreground hover:bg-muted" aria-label="Cerrar">
+                <ChevronRight className="w-4 h-4 rotate-180" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[120px]">
+              {coachMessages.length === 0 && (
+                <p className="text-sm text-muted-foreground">Escribe cuando quieras. Respuestas breves y calmadas.</p>
+              )}
+              {coachMessages.map((m, i) => (
+                <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
+                  <span className={m.role === "user" ? "inline-block px-3 py-2 rounded-2xl bg-primary/20 text-foreground text-sm" : "inline-block px-3 py-2 rounded-2xl bg-muted text-foreground text-sm"}>
+                    {m.content}
+                  </span>
+                </div>
+              ))}
+              {coachLoading && <p className="text-sm text-muted-foreground animate-pulse">Pensando...</p>}
+            </div>
+            <form onSubmit={(e) => { e.preventDefault(); handleSendCoach(); }} className="p-4 border-t border-border/50 flex gap-2">
+              <input
+                type="text"
+                value={coachInput}
+                onChange={(e) => setCoachInput(e.target.value)}
+                placeholder="Escribe aquí..."
+                className="flex-1 rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                disabled={coachLoading}
+              />
+              <button type="submit" disabled={coachLoading || !coachInput.trim()} className="py-2.5 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+                Enviar
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

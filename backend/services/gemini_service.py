@@ -16,13 +16,15 @@ import logging
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from dotenv import load_dotenv
 import google.generativeai as genai
 from psycopg2.extras import RealDictCursor
 
 from database import get_connection, release_connection
-from services.progress_service import get_weekly_progress, get_week_start
+from services.progress_service import get_weekly_progress, get_week_start, get_insight_summary
+from services.habit_service import get_streak
 
 load_dotenv()
 
@@ -32,6 +34,12 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY", ""))
 
 _GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 _TIP_TTL_HOURS: int = int(os.getenv("TIP_TTL_HOURS", "24"))
+
+# Reglas comunes para todas las respuestas IA (plan 3.x)
+_ZEN_RULES = (
+    "Responde en español neutro. Tono de coach zen suave. "
+    "Máximo 120 palabras. Sin emojis. Sin clichés. Sin afirmaciones médicas. "
+)
 
 
 @contextmanager
@@ -93,7 +101,7 @@ def _is_stale(generated_at: datetime) -> bool:
     return age >= timedelta(hours=_TIP_TTL_HOURS)
 
 
-def get_motivational_tip(user_id: str, force: bool = False) -> str:
+async def get_motivational_tip(user_id: str, force: bool = False) -> str:
     """
     Devuelve el consejo motivacional para el usuario de la semana actual.
 
@@ -143,7 +151,7 @@ def get_motivational_tip(user_id: str, force: bool = False) -> str:
 
         try:
             model = genai.GenerativeModel(_GEMINI_MODEL)
-            response = model.generate_content(prompt)
+            response = await model.generate_content_async(prompt)
             tip = response.text.strip()
             if not tip:
                 raise ValueError("Gemini devolvió una respuesta vacía.")
@@ -159,3 +167,136 @@ def get_motivational_tip(user_id: str, force: bool = False) -> str:
         _save_tip(conn, user_id, week_start, tip)
 
     return tip
+
+
+async def get_progress_insight(user_id: str) -> str:
+    """
+    Insight inteligente del progreso: observación basada en datos,
+    interpretación reflexiva y recomendación concreta. Se genera al abrir Dashboard.
+    """
+    with _get_conn() as conn:
+        summary = get_insight_summary(conn, user_id)
+    if not summary:
+        return "Aún no hay suficientes datos. Cuando completes hábitos esta semana, podrás ver aquí un insight personalizado."
+    day_names = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    strongest = day_names[summary.strongest_day] if 0 <= summary.strongest_day < 7 else "—"
+    weakest = day_names[summary.weakest_day] if 0 <= summary.weakest_day < 7 else "—"
+    trend = {"up": "subiendo respecto a la semana anterior", "down": "bajando respecto a la semana anterior", "same": "estable respecto a la semana anterior"}.get(summary.trend_vs_previous, "estable")
+    prompt = (
+        _ZEN_RULES
+        + "\n\nEres un coach de hábitos. Con estos datos del usuario, escribe un único párrafo que incluya:\n"
+        "1) Una observación breve basada en los datos.\n"
+        "2) Una interpretación reflexiva.\n"
+        "3) Una recomendación concreta y realista.\n\n"
+        f"Datos: porcentaje semanal {summary.weekly_percentage}%, "
+        f"día más fuerte {strongest}, más débil {weakest}, tendencia {trend}, "
+        f"número de hábitos {summary.num_habits}."
+    )
+    try:
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = await model.generate_content_async(prompt)
+        return response.text.strip() or "Tu progreso va tomando forma. Sigue con un pequeño paso a la vez."
+    except Exception as exc:
+        logger.error("Gemini progress insight failed for user %s: %s", user_id, exc)
+        return "Tu progreso va tomando forma. Sigue con un pequeño paso a la vez."
+
+
+async def get_contextual_message(event_type: str, context: dict) -> str:
+    """
+    Mensaje contextual por evento (racha rota, nueva racha, racha 7, mejora, caída).
+    Objetivo: validar emoción y ofrecer un micro-paso.
+    """
+    event_descriptions = {
+        "racha_rota": "El usuario acaba de romper una racha en un hábito.",
+        "nueva_racha": "El usuario acaba de empezar una nueva racha (primer día).",
+        "racha_7": "El usuario acaba de cumplir 7 días seguidos en un hábito.",
+        "mejora_significativa": "El usuario ha mejorado de forma significativa respecto a la semana anterior.",
+        "caida_significativa": "El usuario ha tenido una caída significativa respecto a la semana anterior.",
+    }
+    desc = event_descriptions.get(event_type, "Evento de progreso.")
+    ctx_str = " ".join(f"{k}: {v}" for k, v in context.items())
+    prompt = (
+        _ZEN_RULES
+        + f"\n\n{desc} Contexto: {ctx_str}. "
+        "Escribe un mensaje muy breve que valide la emoción del usuario y sugiera un solo micro-paso. Sin emojis."
+    )
+    try:
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = await model.generate_content_async(prompt)
+        return response.text.strip() or "Cada día es una nueva oportunidad."
+    except Exception as exc:
+        logger.error("Gemini contextual message failed: %s", exc)
+        return "Cada día es una nueva oportunidad."
+
+
+async def get_habit_suggestion(user_id: str) -> dict:
+    """
+    Recomendador inteligente de hábito. Devuelve name, frequency, reason, first_step.
+    """
+    with _get_conn() as conn:
+        progress = get_weekly_progress(conn, user_id)
+    if not progress:
+        consistency = "sin hábitos aún"
+        habits_text = "Ninguno"
+    else:
+        avg_pct = sum(p.percentage for p in progress) / len(progress)
+        consistency = f"consistencia media {round(avg_pct)}%"
+        habits_text = ", ".join(p.habit_name for p in progress)
+    prompt = (
+        _ZEN_RULES
+        + f"\n\nEl usuario tiene estos hábitos: {habits_text}. {consistency}. "
+        "Sugiere UN solo hábito nuevo que encaje (nombre corto), su frecuencia (ej. diario, 3 veces por semana), "
+        "una razón breve y un primer paso concreto. Responde SOLO con un JSON válido con las claves: name, frequency, reason, first_step. Sin otro texto."
+    )
+    try:
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = await model.generate_content_async(prompt)
+        text = response.text.strip()
+        # Extraer JSON si viene envuelto en markdown
+        if "```" in text:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                text = text[start:end]
+        import json
+        data = json.loads(text)
+        return {
+            "name": data.get("name", "Nuevo hábito"),
+            "frequency": data.get("frequency", "diario"),
+            "reason": data.get("reason", ""),
+            "first_step": data.get("first_step", ""),
+        }
+    except Exception as exc:
+        logger.error("Gemini habit suggestion failed for user %s: %s", user_id, exc)
+        return {
+            "name": "Caminar 10 minutos",
+            "frequency": "diario",
+            "reason": "Movimiento suave que ayuda a mantener energía.",
+            "first_step": "Sal hoy a dar una vuelta breve.",
+        }
+
+
+async def chat_coach(user_id: str, message: str, history: Optional[list] = None) -> str:
+    """
+    Chat coach zen: respuesta empática, breve, sin presión, sin consejos médicos.
+    history: lista de {role, content} para contexto (opcional).
+    """
+    system = (
+        _ZEN_RULES
+        + " Eres un coach zen. Responde con empatía, de forma breve y calmada. "
+        "No presiones. No des consejos médicos. La experiencia debe ser calmada, no técnica."
+    )
+    parts = [system + "\n\nEl usuario escribe: " + message]
+    if history:
+        for h in history[-6:]:  # últimas 3 rondas
+            parts.append(f"{h.get('role', 'user')}: {h.get('content', '')}")
+    try:
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = await model.generate_content_async("\n".join(parts))
+        text = (response.text or "").strip()
+        if not text:
+            return "Estoy aquí cuando me necesites."
+        return text
+    except Exception as exc:
+        logger.error("Gemini chat coach failed for user %s: %s", user_id, exc)
+        return "Estoy aquí cuando me necesites."

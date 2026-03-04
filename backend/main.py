@@ -11,7 +11,7 @@ load_dotenv()
 # en el arranque y falle rápido si DATABASE_URL no está definido.
 import database  # noqa: F401, E402
 from limiter import limiter
-from routers import users, habits, habit_logs, progress, tips
+from routers import users, habits, habit_logs, progress, tips, ai
 
 app = FastAPI(title="HabitTracker API", version="2.0.0")
 
@@ -34,6 +34,7 @@ app.include_router(habits.router)
 app.include_router(habit_logs.router)
 app.include_router(progress.router)
 app.include_router(tips.router)
+app.include_router(ai.router)
 
 
 @app.get("/health")

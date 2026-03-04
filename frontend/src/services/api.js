@@ -1,20 +1,27 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }))
-    // Adjuntamos el status al error para que los componentes puedan
-    // distinguir, por ejemplo, un 409 (conflicto) de un 500 (fallo interno)
-    const err = new Error(body.detail || 'Error en la petición')
-    err.status = res.status
-    throw err
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout for AI
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      signal: controller.signal,
+      ...options,
+    })
+    clearTimeout(timeoutId)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: res.statusText }))
+      const err = new Error(body.detail || 'Error en la petición')
+      err.status = res.status
+      throw err
+    }
+    if (res.status === 204) return null
+    return res.json()
+  } catch (error) {
+    clearTimeout(timeoutId)
+    throw error
   }
-  if (res.status === 204) return null
-  return res.json()
 }
 
 // --- Usuarios ---
@@ -61,4 +68,23 @@ export const progressApi = {
 export const tipsApi = {
   get: (userId) => request(`/tips/?user_id=${userId}`),
   refresh: (userId) => request(`/tips/?user_id=${userId}&force=true`),
+}
+
+// --- IA (Gemini): insight, eventos contextuales, sugerencia de hábito, coach ---
+export const insightApi = {
+  get: (userId) => request(`/ai/insight?user_id=${userId}`),
+}
+
+export const aiApi = {
+  contextualEvent: (body) =>
+    request('/ai/contextual-event', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  suggestHabit: (userId) => request(`/ai/suggest-habit?user_id=${userId}`),
+  coach: (body) =>
+    request('/ai/coach', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 }

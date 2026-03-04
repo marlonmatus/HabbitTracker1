@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { habitsApi, habitLogsApi } from '../services/api';
+import { habitsApi, habitLogsApi, aiApi } from '../services/api';
 
 const USER_ID = import.meta.env.VITE_USER_ID || 'demo-user'
 
-export function useHabits(date) {
+export function useHabits(date, options = {}) {
+  const { onContextualEvent } = options
   const [habits, setHabits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -56,7 +57,15 @@ export function useHabits(date) {
       } else {
         await habitLogsApi.remove(habit.id, USER_ID, date);
       }
-      // Aquí el servidor respondería con la racha real, pero mantenemos la optimista
+      await fetchHabits();
+      try {
+        const data = await aiApi.contextualEvent({
+          user_id: USER_ID,
+          habit_id: habit.id,
+          just_completed: isCompleted,
+        });
+        if (data.message && onContextualEvent) onContextualEvent(data.message, data.event_type);
+      } catch (_) {}
     } catch (err) {
       console.error("Failed to toggle habit:", err);
       // 3. Rollback en caso de error de red

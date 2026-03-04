@@ -59,24 +59,25 @@ export default function Onboarding() {
     if (name.trim()) {
       localStorage.setItem('habittrack-userName', name.trim())
     }
-    
-    // Enviar hábitos al backend
+
     try {
-      const habitsToCreate = selectedHabits.map(id => {
-        const habit = SUGGESTED_HABITS.find(h => h.id === id)
-        return {
+      const habitsToCreate = selectedHabits
+        .map(id => SUGGESTED_HABITS.find(h => h.id === id))
+        .filter(Boolean)
+        .map(habit => ({
           user_id: USER_ID,
           name: habit.label,
           description: habit.category
-        }
-      })
+        }))
       
-      await Promise.all(habitsToCreate.map(habitData => habitsApi.create(habitData)))
+      if (habitsToCreate.length > 0) {
+        await Promise.all(habitsToCreate.map(habitData => habitsApi.create(habitData)))
+      }
     } catch (error) {
       console.error("Error al crear hábitos:", error)
+    } finally {
+      navigate('/dashboard')
     }
-
-    navigate('/dashboard')
   }
 
   return (
@@ -230,7 +231,8 @@ export default function Onboarding() {
               Tus intenciones han sido registradas. El viaje hacia tu mejor versión comienza hoy.
             </p>
             
-            <button 
+            <button
+              type="button"
               onClick={finishOnboarding}
               className="w-full bg-primary text-primary-foreground py-4 rounded-full font-semibold text-lg shadow-level-2 transition-transform active:scale-[0.98]"
             >

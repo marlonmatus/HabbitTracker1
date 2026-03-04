@@ -31,17 +31,6 @@ def remove_habit_log(payload: HabitLogCreate, db=Depends(get_db)):
     return None
 
 
-@router.delete("/", status_code=204)
-def remove_habit_log(payload: HabitLogCreate, db=Depends(get_db)):
-    """
-    DELETE /habit-logs/
-
-    Desmarca un hábito previamente completado en una fecha concreta.
-    """
-    habit_log_service.delete_log(db, payload.habit_id, payload.log_date)
-    return None
-
-
 @router.get("/{habit_id}", response_model=list[HabitLogResponse])
 def list_logs(
     habit_id: str,

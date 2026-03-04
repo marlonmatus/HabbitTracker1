@@ -15,7 +15,29 @@ from fastapi import HTTPException
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 from models.habit import HabitCreate, HabitResponse, HabitDailyResponse
-from datetime import date
+from datetime import date, timedelta
+
+
+def get_streak(conn: PgConnection, habit_id: str, as_of: date) -> int:
+    """
+    Racha de días consecutivos hacia atrás desde as_of (incluido).
+    Cuenta cuántos días seguidos hay con log hasta el más reciente sin log.
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT log_date FROM habit_logs WHERE habit_id = %s AND log_date <= %s ORDER BY log_date DESC LIMIT 500",
+            (habit_id, as_of),
+        )
+        dates = [r["log_date"] for r in cur.fetchall()]
+    if not dates:
+        return 0
+    dates_set = set(dates)
+    streak = 0
+    d = as_of
+    while d in dates_set:
+        streak += 1
+        d -= timedelta(days=1)
+    return streak
 
 
 def create_habit(conn: PgConnection, payload: HabitCreate) -> HabitResponse:
@@ -84,13 +106,11 @@ def get_daily_habits(conn: PgConnection, user_id: str, target_date: date) -> lis
         )
         rows = cur.fetchall()
 
-        # Calculamos streak como 0 por ahora para simplificar, se puede implementar después.
         result = []
         for row in rows:
             row_dict = dict(row)
-            row_dict['streak'] = 0
+            row_dict["streak"] = get_streak(conn, str(row["id"]), target_date)
             result.append(HabitDailyResponse(**row_dict))
-            
         return result
 
 

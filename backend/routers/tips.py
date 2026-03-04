@@ -13,7 +13,7 @@ class TipResponse(BaseModel):
 
 @router.get("/")
 @limiter.limit("10/minute")
-def get_tip(request: Request, user_id: str, force: bool = False):
+async def get_tip(request: Request, user_id: str, force: bool = False):
     """
     GET /tips/?user_id=...&force=false
 
@@ -22,5 +22,5 @@ def get_tip(request: Request, user_id: str, force: bool = False):
     Límite: 10 peticiones por minuto por IP para proteger la cuota de Gemini.
     """
     validate_uuid_param(user_id, "user_id")
-    tip = gemini_service.get_motivational_tip(user_id, force=force)
+    tip = await gemini_service.get_motivational_tip(user_id, force=force)
     return TipResponse(tip=tip)
