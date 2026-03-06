@@ -35,10 +35,11 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY", ""))
 _GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 _TIP_TTL_HOURS: int = int(os.getenv("TIP_TTL_HOURS", "24"))
 
-# Reglas comunes para todas las respuestas IA (plan 3.x)
+# Reglas comunes para respuestas IA (plan 3.x). Consejos con formato: ## secciones, ** ideas clave, emojis.
 _ZEN_RULES = (
     "Responde en español neutro. Tono de coach zen suave. "
-    "Máximo 120 palabras. Sin emojis. Sin clichés. Sin afirmaciones médicas. "
+    "Usa ## para títulos de sección, ** para ideas importantes y emojis que mejoren la lectura (bienestar, energía, calma). "
+    "Sin clichés. Sin afirmaciones médicas. "
 )
 
 
@@ -142,10 +143,9 @@ async def get_motivational_tip(user_id: str, force: bool = False) -> str:
             for item in progress
         ]
         prompt = (
-            "Eres un coach de hábitos motivacional. "
-            "Basándote en el progreso semanal del usuario, genera un consejo corto, "
-            "positivo y personalizado en español (máximo 3 oraciones). "
-            "No repitas los datos, solo da el consejo.\n\n"
+            _ZEN_RULES
+            + "Eres un coach de hábitos motivacional. Basándote en el progreso semanal del usuario, genera un consejo breve. "
+            "Formato: usa ## para cada sección (ej: ## Esta semana), ** para ideas clave y emojis. Máximo 4 secciones y 150 palabras.\n\n"
             f"Progreso de esta semana:\n" + "\n".join(summary_lines)
         )
 
@@ -184,10 +184,10 @@ async def get_progress_insight(user_id: str) -> str:
     trend = {"up": "subiendo respecto a la semana anterior", "down": "bajando respecto a la semana anterior", "same": "estable respecto a la semana anterior"}.get(summary.trend_vs_previous, "estable")
     prompt = (
         _ZEN_RULES
-        + "\n\nEres un coach de hábitos. Con estos datos del usuario, escribe un único párrafo que incluya:\n"
-        "1) Una observación breve basada en los datos.\n"
-        "2) Una interpretación reflexiva.\n"
-        "3) Una recomendación concreta y realista.\n\n"
+        + "\n\nEres un coach de hábitos. Con estos datos escribe un insight muy breve y puntual. "
+        "Una sola observación clara, una idea clave y una recomendación concreta en 1–2 líneas. "
+        "Formato: ## para secciones (máximo 2–3), ** para lo importante, emojis sutiles. "
+        "Máximo 50–65 palabras. Sin relleno: cada frase debe aportar.\n\n"
         f"Datos: porcentaje semanal {summary.weekly_percentage}%, "
         f"día más fuerte {strongest}, más débil {weakest}, tendencia {trend}, "
         f"número de hábitos {summary.num_habits}."
@@ -276,15 +276,101 @@ async def get_habit_suggestion(user_id: str) -> dict:
         }
 
 
+# ─── Flujo de consejo personalizado (preguntas una por una) ─────────────────────
+
+CONSEJO_QUESTIONS = [
+    "¿Cómo te sientes con tu nivel de energía últimamente?",
+    "¿Qué hábito te cuesta más mantener y por qué crees que es?",
+    "¿En qué momento del día sueles tener más fuerza de voluntad?",
+    "¿Hay algo que te esté generando estrés o que quieras mejorar esta semana?",
+    "¿Qué te gustaría lograr con tus hábitos en el próximo mes?",
+]
+
+_consejo_sessions: dict = {}  # session_id -> { "user_id": str, "answers": list[str], "step": int }
+
+
+def _new_session_id() -> str:
+    import uuid
+    return str(uuid.uuid4())
+
+
+async def start_consejo_flow(user_id: str) -> tuple[str, str]:
+    """
+    Inicia el flujo de consejo personalizado. Devuelve (session_id, primera_pregunta).
+    """
+    session_id = _new_session_id()
+    _consejo_sessions[session_id] = {"user_id": user_id, "answers": [], "step": 0}
+    return session_id, CONSEJO_QUESTIONS[0]
+
+
+async def submit_consejo_answer(session_id: str, answer: str) -> dict:
+    """
+    Envía la respuesta del usuario. Devuelve:
+    - {"question": "siguiente pregunta"} si quedan más preguntas.
+    - {"done": True, "consejo": "..."} si ya no hay más preguntas. El consejo viene
+      formateado con ## para secciones, ** para ideas importantes y emojis.
+    """
+    session = _consejo_sessions.get(session_id)
+    if not session:
+        raise ValueError("Sesión no encontrada o expirada.")
+    answer_clean = (answer or "").strip()
+    if not answer_clean:
+        raise ValueError("La respuesta no puede estar vacía.")
+    session["answers"].append(answer_clean)
+    session["step"] += 1
+    next_idx = session["step"]
+    if next_idx < len(CONSEJO_QUESTIONS):
+        return {"question": CONSEJO_QUESTIONS[next_idx]}
+    # Generar consejo con Gemini: formateado con secciones, negritas y emojis
+    consejo = await _generate_formatted_consejo(session["user_id"], session["answers"])
+    del _consejo_sessions[session_id]
+    return {"done": True, "consejo": consejo}
+
+
+async def _generate_formatted_consejo(user_id: str, answers: list[str]) -> str:
+    """Genera el consejo personalizado con formato: ## secciones, ** ideas clave, emojis."""
+    answers_text = "\n".join(f"- {a}" for a in answers)
+    prompt = (
+        "Eres un coach de bienestar zen. Con las siguientes respuestas del usuario, escribe un consejo personalizado.\n\n"
+        "REQUISITOS DE FORMATO (obligatorios):\n"
+        "1. Usa ## para cada título de sección (ej: ## Energía).\n"
+        "2. Usa ** para resaltar ideas importantes (ej: **descansar bien**).\n"
+        "3. Incluye emojis que mejoren la lectura (bienestar, energía, calma, logros).\n"
+        "4. Máximo 4 secciones y 200 palabras. Tono calmado y en español.\n\n"
+        "Respuestas del usuario:\n" + answers_text
+    )
+    try:
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = await model.generate_content_async(prompt)
+        text = (response.text or "").strip()
+        if not text:
+            return _fallback_formatted_consejo()
+        return text
+    except Exception as exc:
+        logger.error("Gemini formatted consejo failed for user %s: %s", user_id, exc)
+        return _fallback_formatted_consejo()
+
+
+def _fallback_formatted_consejo() -> str:
+    return (
+        "## Tu momento\n\n"
+        "**Cada pequeño paso cuenta.** 🌱\n\n"
+        "## Siguiente paso\n\n"
+        "Elige una sola acción hoy y hazla con calma. ✨"
+    )
+
+
 async def chat_coach(user_id: str, message: str, history: Optional[list] = None) -> str:
     """
     Chat coach zen: respuesta empática, breve, sin presión, sin consejos médicos.
     history: lista de {role, content} para contexto (opcional).
+    La respuesta usa ** para negritas y saltos de línea para párrafos (se muestra formateada en la UI).
     """
     system = (
         _ZEN_RULES
         + " Eres un coach zen. Responde con empatía, de forma breve y calmada. "
-        "No presiones. No des consejos médicos. La experiencia debe ser calmada, no técnica."
+        "No presiones. No des consejos médicos. La experiencia debe ser calmada, no técnica. "
+        "Formato: usa ** para resaltar ideas importantes y separa párrafos con saltos de línea. Puedes usar emojis con moderación."
     )
     parts = [system + "\n\nEl usuario escribe: " + message]
     if history:

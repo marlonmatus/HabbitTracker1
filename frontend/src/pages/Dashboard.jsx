@@ -8,6 +8,8 @@ import { StatCard } from "../components/ui/StatCard"
 import { EmptyState } from "../components/ui/EmptyState"
 import { DashboardSkeleton } from "../components/ui/LoadingSkeletons"
 import { ContextualToast } from "../components/ui/ContextualToast"
+import ConsejoFlow from "../components/ConsejoFlow"
+import { ConsejoFormatted } from "../components/ui/ConsejoFormatted"
 import { useHabits } from "../hooks/useHabits"
 import { useProgress } from "../hooks/useProgress"
 import { aiApi, habitsApi } from "../services/api"
@@ -27,6 +29,7 @@ export default function Dashboard() {
   const [suggestion, setSuggestion] = useState(null)
   const [loadingSuggest, setLoadingSuggest] = useState(false)
   const [coachOpen, setCoachOpen] = useState(false)
+  const [consejoFlowOpen, setConsejoFlowOpen] = useState(false)
   const [coachMessages, setCoachMessages] = useState([])
   const [coachInput, setCoachInput] = useState("")
   const [coachLoading, setCoachLoading] = useState(false)
@@ -238,7 +241,7 @@ export default function Dashboard() {
         {/* --- Columna Secundaria (Derecha en Desktop) --- */}
         <div className="lg:col-span-4 space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 fill-mode-both">
 
-          {/* Gemini Insight */}
+          {/* Consejo de la semana + acceso a consejo personalizado */}
           <MotivationCard
             title="Consejo de la semana"
             onRefresh={refreshTip}
@@ -247,9 +250,18 @@ export default function Dashboard() {
           >
             {loadingTip ? (
               <span className="opacity-50 animate-pulse">Analizando tus patrones...</span>
+            ) : tip && (tip.includes('##') || tip.includes('**')) ? (
+              <ConsejoFormatted text={tip} />
             ) : (
               tip || "Cada pequeño esfuerzo suma. Sigue adelante."
             )}
+            <button
+              type="button"
+              onClick={() => setConsejoFlowOpen(true)}
+              className="mt-4 text-sm font-medium text-secondary hover:text-secondary/80 transition-colors"
+            >
+              Consejo personalizado (respondo preguntas)
+            </button>
           </MotivationCard>
 
           <MotivationCard title="Insight de tu progreso" className="border-primary/20 bg-primary/5">
@@ -257,6 +269,8 @@ export default function Dashboard() {
               <span className="opacity-50 animate-pulse">Generando insight...</span>
             ) : errorInsight ? (
               <span className="text-muted-foreground text-sm">No se pudo cargar el insight.</span>
+            ) : insight && (insight.includes('##') || insight.includes('**')) ? (
+              <ConsejoFormatted text={insight} />
             ) : (
               insight || "Completa hábitos esta semana para ver un insight personalizado."
             )}
@@ -316,6 +330,10 @@ export default function Dashboard() {
         />
       )}
 
+      {consejoFlowOpen && (
+        <ConsejoFlow userId={USER_ID} onClose={() => setConsejoFlowOpen(false)} />
+      )}
+
       {coachOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
           <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setCoachOpen(false)} aria-hidden />
@@ -332,9 +350,15 @@ export default function Dashboard() {
               )}
               {coachMessages.map((m, i) => (
                 <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
-                  <span className={m.role === "user" ? "inline-block px-3 py-2 rounded-2xl bg-primary/20 text-foreground text-sm" : "inline-block px-3 py-2 rounded-2xl bg-muted text-foreground text-sm"}>
-                    {m.content}
-                  </span>
+                  {m.role === "user" ? (
+                    <span className="inline-block px-3 py-2 rounded-2xl bg-primary/20 text-foreground text-sm">
+                      {m.content}
+                    </span>
+                  ) : (
+                    <div className="inline-block max-w-[95%] px-3 py-2 rounded-2xl bg-muted text-foreground text-sm text-left">
+                      <ConsejoFormatted text={m.content} className="[&_p]:mb-1.5 [&_p:last-child]:mb-0 [&_h4]:text-sm [&_h4]:mt-2 [&_h4]:mb-1 [&_h4:first-child]:mt-0" />
+                    </div>
+                  )}
                 </div>
               ))}
               {coachLoading && <p className="text-sm text-muted-foreground animate-pulse">Pensando...</p>}

@@ -87,4 +87,14 @@ export const aiApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  consejoStart: (userId) =>
+    request('/ai/consejo/start', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  consejoAnswer: (sessionId, answer) =>
+    request('/ai/consejo/answer', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, answer }),
+    }),
 }

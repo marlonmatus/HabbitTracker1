@@ -12,10 +12,14 @@ Configuración:
   - La clave de identificación es la IP del cliente.
 """
 
+import os
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+# Permite configurar el límite global mediante variables de entorno (útil para distintos ambientes)
+DEFAULT_RATE_LIMIT = os.getenv("RATE_LIMIT", "30/minute")
+
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=["30/minute"],
+    default_limits=[DEFAULT_RATE_LIMIT],
 )

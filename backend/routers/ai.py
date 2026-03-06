@@ -38,6 +38,41 @@ class CoachBody(BaseModel):
     history: Optional[List[Dict]] = None
 
 
+class ConsejoStartBody(BaseModel):
+    user_id: str
+
+
+class ConsejoAnswerBody(BaseModel):
+    session_id: str
+    answer: str
+
+
+# --- Consejo personalizado (preguntas una por una, luego consejo formateado)
+@router.post("/consejo/start")
+@limiter.limit("5/minute")
+async def consejo_start(request: Request, body: ConsejoStartBody):
+    """POST /ai/consejo/start — Inicia flujo de preguntas para consejo personalizado."""
+    validate_uuid_param(body.user_id, "user_id")
+    session_id, question = await gemini_service.start_consejo_flow(body.user_id)
+    return {"session_id": session_id, "question": question}
+
+
+@router.post("/consejo/answer")
+@limiter.limit("15/minute")
+async def consejo_answer(request: Request, body: ConsejoAnswerBody):
+    """POST /ai/consejo/answer — Envía respuesta; devuelve siguiente pregunta o consejo final."""
+    session_id = (body.session_id or "").strip()
+    if not session_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="session_id requerido")
+    try:
+        result = await gemini_service.submit_consejo_answer(session_id, body.answer or "")
+    except ValueError as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
 # --- Insight (también accesible como GET /insight para claridad)
 @router.get("/insight")
 @limiter.limit("10/minute")
